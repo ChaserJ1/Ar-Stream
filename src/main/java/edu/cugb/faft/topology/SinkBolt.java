@@ -1,12 +1,11 @@
 package edu.cugb.faft.topology;
 
-import org.apache.storm.topology.base.BaseRichBolt;
-import org.apache.storm.task.TopologyContext;
-import org.apache.storm.task.OutputCollector;
-import org.apache.storm.topology.OutputFieldsDeclarer;
-import org.apache.storm.tuple.Tuple;
-
 import edu.cugb.faft.monitor.DefaultLatencyMonitor;
+import org.apache.storm.task.OutputCollector;
+import org.apache.storm.task.TopologyContext;
+import org.apache.storm.topology.OutputFieldsDeclarer;
+import org.apache.storm.topology.base.BaseRichBolt;
+import org.apache.storm.tuple.Tuple;
 
 import java.util.Map;
 
@@ -16,12 +15,15 @@ import java.util.Map;
  */
 public class SinkBolt extends BaseRichBolt {
     private OutputCollector collector;
-    @Override public void prepare(Map<String, Object> topoConf, TopologyContext context, OutputCollector collector) {
+
+    @Override
+    public void prepare(Map<String, Object> topoConf, TopologyContext context, OutputCollector collector) {
         this.collector = collector;
         DefaultLatencyMonitor.init();
     }
 
-    @Override public void execute(Tuple tuple) {
+    @Override
+    public void execute(Tuple tuple) {
         String word = tuple.getStringByField("word");
         int count = tuple.getIntegerByField("count");
         System.out.printf("[Default Sink] Word=%s | Count=%d%n", word, count);
@@ -31,5 +33,8 @@ public class SinkBolt extends BaseRichBolt {
         collector.ack(tuple);
     }
 
-    @Override public void declareOutputFields(OutputFieldsDeclarer declarer) {}
+    @Override
+
+    public void declareOutputFields(OutputFieldsDeclarer declarer) {
+    }
 }

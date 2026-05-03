@@ -259,31 +259,63 @@ public class ApproxBackupManager implements Serializable {
                     Eobs * 100, dynamicStep, this.step);
 
             sortedOps.sort((a, b) -> Double.compare(b.getValue(), a.getValue())); // 降序排列
+            int totalOps = sortedOps.size();
 
-            for (Map.Entry<String, Double> entry : sortedOps) {
+            // ========== 分层递进调节策略 ==========
+            // Tier 1: Top 0%~30%  → 优先调整（收益最高）
+            // Tier 2: 31%~60%     → Tier1 全满载后启用
+            // Tier 3: 61%~100%    → Tier2 也全满载后启用
+            int tier1End = Math.min(targetCount, totalOps);              // Top 30%
+            int tier2End = Math.min((int)(totalOps * 0.6), totalOps);    // 31%~60%
+            int tier3End = totalOps;                                     // 61%~100%
+
+            int currentTier = 1;
+            boolean allSaturatedInTier = true; // 当前层是否全部满载
+
+            for (int i = 0; i < totalOps; i++) {
+                Map.Entry<String, Double> entry = sortedOps.get(i);
                 String op = entry.getKey();
                 double oldR = ratioByOperator.getOrDefault(op, currentRatio);
 
-                // 如果该算子已经满载 (接近 1.0)，则跳过
-                // 避免死锁在 split-bolt 上，让机会流向 chaos-bolt 等低采样节点
+                // 判断是否到达了层边界
+                if (i == tier1End && currentTier == 1) {
+                    if (!allSaturatedInTier) break; // Tier1 未全满载，不需要继续
+                    // Tier1 全满载，升级到 Tier2
+                    currentTier = 2;
+                    allSaturatedInTier = true;
+                    System.out.println("[FAFT Adjust] ⬆️ Tier1 (Top30%) 全部满载，升级至 Tier2 (31%-60%)");
+                } else if (i == tier2End && currentTier == 2) {
+                    if (!allSaturatedInTier) break; // Tier2 未全满载，不需要继续
+                    // Tier2 也全满载，升级到 Tier3
+                    currentTier = 3;
+                    allSaturatedInTier = true;
+                    System.out.println("[FAFT Adjust] ⬆️ Tier2 (31%-60%) 全部满载，升级至 Tier3 (61%-100%)");
+                }
+
+                // 如果该算子已经满载，跳过
                 if (oldR >= rmax - 0.001) {
                     continue;
                 }
+
+                // 遇到了未满载的算子，标记当前层未全满载
+                allSaturatedInTier = false;
 
                 // 执行上调
                 double newR = clamp(oldR + dynamicStep);
                 ratioByOperator.put(op, newR);
 
-                System.out.printf("[FAFT Adjust][LOCAL-UP] op=%s oldR=%.3f newR=%.3f (error=%.4f > %.4f)%n",
-                        op, oldR, newR, Eobs, Emax);
+                String tierTag = (currentTier == 1) ? "Tier1" : (currentTier == 2) ? "Tier2" : "Tier3";
+                System.out.printf("[FAFT Adjust][%s-UP] op=%s oldR=%.3f newR=%.3f (error=%.4f > %.4f)%n",
+                        tierTag, op, oldR, newR, Eobs, Emax);
 
                 adjustedCount++;
-                // 如果已经调够了目标数量，就结束本轮调节
-                if (adjustedCount >= targetCount) break;
             }
 
             if (adjustedCount == 0) {
                 System.out.println("[FAFT Adjust] ⚠️ 警告：系统全员满载(1.0)，无法进一步降低误差！");
+            } else if (currentTier > 1) {
+                System.out.printf("[FAFT Adjust] ℹ️ 分层调节完成：升级至 Tier%d，本轮共调整了 %d 个算子%n",
+                        currentTier, adjustedCount);
             }
 
         } else if (Eobs < lower) { // 误差过小，执行下调

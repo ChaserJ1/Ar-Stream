@@ -10,10 +10,9 @@ import org.apache.storm.tuple.Values;
 import java.util.Map;
 import java.util.Random;
 
-
 /**
  * 简单自发数据源：每隔 200ms 发射一条句子，字段名为 "sentence"
- * 真实环境可替换为 KafkaSpout 或外部数据接入。
+ * 真实环境替换为外部数据接入。
  */
 public class SourceSpout extends BaseRichSpout {
     private SpoutOutputCollector collector;
@@ -26,23 +25,33 @@ public class SourceSpout extends BaseRichSpout {
     };
     private final Random rand = new Random();
 
-    @Override public void open(Map<String, Object> conf, TopologyContext context, SpoutOutputCollector collector) {
+    @Override
+    public void open(Map<String, Object> conf, TopologyContext context, SpoutOutputCollector collector) {
         this.collector = collector;
     }
 
-    @Override public void nextTuple() {
+    @Override
+    public void nextTuple() {
         String sentence = sentences[rand.nextInt(sentences.length)];
         collector.emit(new Values(sentence), sentence); // 使用 sentence 作为 messageId
-        try { Thread.sleep(200); } catch (InterruptedException ignored) {}
+        try {
+            Thread.sleep(200);
+        } catch (InterruptedException ignored) {
+        }
     }
 
-    @Override public void ack(Object msgId) { /* 可选日志 */ }
-    @Override public void fail(Object msgId) {
+    @Override
+    public void ack(Object msgId) {
+        /* 可选日志 */ }
+
+    @Override
+    public void fail(Object msgId) {
         /* 可选重发 */
         collector.emit(new Values(String.valueOf(msgId)), msgId);
     }
 
-    @Override public void declareOutputFields(OutputFieldsDeclarer declarer) {
+    @Override
+    public void declareOutputFields(OutputFieldsDeclarer declarer) {
         declarer.declare(new Fields("sentence"));
     }
 }

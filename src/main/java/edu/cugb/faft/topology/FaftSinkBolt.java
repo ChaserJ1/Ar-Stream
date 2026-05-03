@@ -16,7 +16,7 @@ import static org.apache.commons.lang3.math.NumberUtils.toDouble;
 
 @SuppressWarnings("unchecked")
 public class FaftSinkBolt extends BaseRichBolt {
-    private OutputCollector collector;   // 用于 ack/fail
+    private OutputCollector collector; // 用于 ack/fail
     private ApproxBackupManager backupManager;
     private String operatorId; // 记录该算子的 componentId，供按算子采样
     // 最终结果视图
@@ -25,14 +25,12 @@ public class FaftSinkBolt extends BaseRichBolt {
 
     // 窗口统计
     private int counter = 0;
-    private static final int CHECK_WINDOW = 1000; // 窗口大小
+    private static final int CHECK_WINDOW = 5000; // 窗口大小
     private double errorThreshold = 0.05;
-
-
 
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context,
-                        OutputCollector collector) {
+            OutputCollector collector) {
         this.collector = collector;
         this.operatorId = context.getThisComponentId();
         System.out.println("[FAFT BoltInit] sink componentId=" + this.operatorId);
@@ -43,7 +41,8 @@ public class FaftSinkBolt extends BaseRichBolt {
 
         // 2. Zookeeper 监控初始化 (修复配置失效问题)
         String zkConnect = (String) topoConf.get("faft.zk.connect");
-        if (zkConnect == null) zkConnect = "192.168.213.130:2181"; // 默认兜底
+        if (zkConnect == null)
+            zkConnect = "192.168.213.130:2181"; // 默认兜底
         FaftLatencyMonitor.setZkConnect(zkConnect);
 
         try {
@@ -51,10 +50,10 @@ public class FaftSinkBolt extends BaseRichBolt {
         } catch (IllegalStateException e) {
             // 如果还没初始化，则用默认参数兜底初始化一次
             this.backupManager = ApproxBackupManager.init(
-                    0.5,   // 初始采样率
-                    0.1,   // 最小采样率
-                    1.0,   // 最大采样率
-                    0.05   // 步长
+                    0.5, // 初始采样率
+                    0.1, // 最小采样率
+                    1.0, // 最大采样率
+                    0.05 // 步长
             );
         }
 
@@ -74,23 +73,23 @@ public class FaftSinkBolt extends BaseRichBolt {
                 for (Map.Entry<String, String> e : impStrMap.entrySet()) {
                     try {
                         impDoubleMap.put(e.getKey(), Double.parseDouble(e.getValue().toString()));
-                    } catch(Exception ignore){}
+                    } catch (Exception ignore) {
+                    }
                 }
                 this.backupManager.updateImportance(impDoubleMap);
                 System.out.println("[FAFT ImportanceUpdate][sink] " + impDoubleMap);
             }
-        }catch (Exception e){
+        } catch (Exception e) {
             System.err.println("⚠️ [Sink] 配置读取部分失败: " + e.getMessage());
         }
-
 
         // 4. 解析算法参数 (差异化权重 + 超参)
         // 4.1 全局默认权重
         double defAlpha = getDouble(topoConf, "faft.alpha", 0.34);
-        double defBeta  = getDouble(topoConf, "faft.beta", 0.33);
+        double defBeta = getDouble(topoConf, "faft.beta", 0.33);
         double defGamma = getDouble(topoConf, "faft.gamma", 0.33);
-        NodeImportanceEvaluator.Weights defaultWeights =
-                new NodeImportanceEvaluator.Weights(defAlpha, defBeta, defGamma);
+        NodeImportanceEvaluator.Weights defaultWeights = new NodeImportanceEvaluator.Weights(defAlpha, defBeta,
+                defGamma);
 
         // 4.2 差异化权重 Map (解析 List<Double> -> Weights)
         Map<String, NodeImportanceEvaluator.Weights> weightsObjMap = new HashMap<>();
@@ -105,9 +104,10 @@ public class FaftSinkBolt extends BaseRichBolt {
                                 new NodeImportanceEvaluator.Weights(val.get(0), val.get(1), val.get(2)));
                     }
                 }
-            } catch (Exception e) { System.err.println("⚠️ 权重解析警告: " + e.getMessage()); }
+            } catch (Exception e) {
+                System.err.println("⚠️ 权重解析警告: " + e.getMessage());
+            }
         }
-
 
         // 4.3 其他算法超参
         double impactDelta = getDouble(topoConf, "faft.impact.delta", 0.9);
@@ -118,14 +118,14 @@ public class FaftSinkBolt extends BaseRichBolt {
         this.errorThreshold = getDouble(topoConf, "faft.error.threshold", 0.05);
         System.out.println("[FAFT Config] Loaded errorThreshold: " + this.errorThreshold);
 
-
         // 5. 准备 DAG & 启动动态重算
         Map<String, List<String>> dag = null;
         List<String> sinkList = null;
         try {
             dag = (Map<String, List<String>>) topoConf.get("faft.dag");
             sinkList = (List<String>) topoConf.get("faft.sinks");
-        } catch (Exception e) {}
+        } catch (Exception e) {
+        }
 
         // 简单的本地兜底，防止 Config 读取失败导致空指针
         if (dag == null || dag.isEmpty()) {
@@ -135,31 +135,31 @@ public class FaftSinkBolt extends BaseRichBolt {
             dag.put("source-spout", List.of("split-bolt"));
             dag.put("split-bolt", List.of("filter-bolt"));
             dag.put("filter-bolt", List.of("chaos-bolt"));
-            dag.put("chaos-bolt",     List.of("faft-count-bolt"));
+            dag.put("chaos-bolt", List.of("faft-count-bolt"));
             dag.put("faft-count-bolt", List.of("faft-sink-bolt"));
             dag.put("faft-sink-bolt", List.of());
             sinkList = List.of("faft-sink-bolt");
         }
         // 二次检查
-        if (sinkList == null) sinkList =  List.of("faft-sink-bolt");
+        if (sinkList == null)
+            sinkList = List.of("faft-sink-bolt");
 
         Set<String> sinks = new HashSet<>(sinkList);
 
         // 启动动态重算 (传入解析好的 Weights Map)
         this.backupManager.startDynamicRebalance(
                 dag, sinks,
-                weightsObjMap,   // 差异化权重
-                defaultWeights,  // 默认权重
+                weightsObjMap, // 差异化权重
+                defaultWeights, // 默认权重
                 impactDelta, decayAlpha,
                 rmin, rmax,
                 10_000L // 重算周期 10s
         );
     }
 
-
     @Override
     public void execute(Tuple input) {
-        try{
+        try {
             String word = input.getStringByField("word");
             int count = input.getIntegerByField("count");
             String type = input.getStringByField("type");
@@ -184,7 +184,8 @@ public class FaftSinkBolt extends BaseRichBolt {
 
     // 计算全局误差并触发调节
     private void calculateAndAdjust() {
-        if (finalRealView.isEmpty()) return;
+        if (finalRealView.isEmpty())
+            return;
 
         double totalRelativeError = 0.0;
         int items = 0;
@@ -204,8 +205,10 @@ public class FaftSinkBolt extends BaseRichBolt {
         double mre = (items == 0) ? 0 : totalRelativeError / items;
 
         String status = "✅";
-        if (mre > 0) status = "⚠️";
-        if (mre > errorThreshold) status = "❌";
+        if (mre > 0)
+            status = "⚠️";
+        if (mre > errorThreshold)
+            status = "❌";
 
         System.out.printf("%s [Global Error] Items=%d | MRE=%.4f%% (Th=%.2f%%)\n",
                 status, items, mre * 100, errorThreshold * 100);
@@ -231,7 +234,8 @@ public class FaftSinkBolt extends BaseRichBolt {
      * 辅助方法：安全获取 Config 中的 double
      */
     private double getDouble(Map<String, Object> map, String key, double defaultValue) {
-        if (map == null) return defaultValue;
+        if (map == null)
+            return defaultValue;
         Object val = map.get(key);
         return toDouble(String.valueOf(val), defaultValue);
     }
