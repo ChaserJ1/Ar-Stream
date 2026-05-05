@@ -50,27 +50,18 @@ public class ChaosBolt extends BaseRichBolt {
     @Override
     public void execute(Tuple input) {
         String word = input.getStringByField("word");
-        String type = input.getStringByField("type");
 
-        // 🛡️ 1. 保护基准流：REAL 类型直接放行，不做任何干扰
-        if ("TYPE_REAL".equals(type)) {
-            collector.emit(input, new Values(word, type));
-            collector.ack(input);
-            return;
-        }
-
-        // ⚔️ 2. 攻击实验流：APPROX 类型
+        // 故障注入
         if (random.nextDouble() < failProbability) {
             // === 触发故障 ===
-            System.out.println("⚡ [Chaos] 击落实验流数据: " + word + " | 发送崩溃信号...");
+            System.out.println("⚡ [Chaos] 击落数据: " + word + " | 发送崩溃信号...");
 
             FaftLatencyMonitor.recordFailure(); // 记录时间
 
             // 发送崩溃信号 (替代原始数据)
-            collector.emit(input, new Values("FAFT_CRASH_SIGNAL", "TYPE_APPROX"));
+            collector.emit(input, new Values("FAFT_CRASH_SIGNAL"));
 
-            // 🔥 关键：手动 ACK，告诉 Spout "处理成功"，防止 Spout 重发这条数据
-            // 这样真值流拿到了数据，实验流丢了数据，误差就产生了
+            // 手动 ACK，告诉 Spout "处理成功"，防止 Spout 重发这条数据
             collector.ack(input);
         } else {
             // === 正常情况 ===
@@ -78,7 +69,7 @@ public class ChaosBolt extends BaseRichBolt {
             if (random.nextDouble() < delayProbability) {
                 try { Thread.sleep(delay); } catch (InterruptedException e) {}
             }
-            collector.emit(input, new Values(word, type));
+            collector.emit(input, new Values(word));
             collector.ack(input);
         }
     }
@@ -86,6 +77,6 @@ public class ChaosBolt extends BaseRichBolt {
 
     @Override
     public void declareOutputFields(OutputFieldsDeclarer declarer) {
-        declarer.declare(new Fields("word", "type"));
+        declarer.declare(new Fields("word"));
     }
 }

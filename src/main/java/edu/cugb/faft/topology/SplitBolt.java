@@ -11,13 +11,11 @@ import org.apache.storm.tuple.Values;
 import java.util.Map;
 
 /**
- * 拆分算子
- * 将数据一分为二，打上标签
+ * 解析算子
+ * 从原始数据行中提取 taxiId，单发下游
  */
 public class SplitBolt extends BaseRichBolt {
     private OutputCollector collector;
-    final String Real = "TYPE_REAL";
-    final String Approx = "TYPE_APPROX";
 
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context, OutputCollector collector) {
@@ -37,12 +35,7 @@ public class SplitBolt extends BaseRichBolt {
             if (firstComma != -1 && secondComma != -1) {
                 String taxiId = line.substring(firstComma + 1, secondComma);
                 if (!taxiId.isEmpty()) {
-                    // === 双轨分发 ===
-                    // 1. 发射基准流 (真值)，标记为 REAL
-                    collector.emit(input, new Values(taxiId, Real));
-
-                    // 2. 发射实验流 (近似值)，标记为 APPROX
-                    collector.emit(input, new Values(taxiId, Approx));
+                    collector.emit(input, new Values(taxiId));
                 }
             }
             collector.ack(input);
@@ -55,6 +48,6 @@ public class SplitBolt extends BaseRichBolt {
 
     @Override
     public void declareOutputFields(OutputFieldsDeclarer declarer) {
-        declarer.declare(new Fields("word", "type"));
+        declarer.declare(new Fields("word"));
     }
 }

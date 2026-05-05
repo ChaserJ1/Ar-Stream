@@ -36,29 +36,29 @@ public class FaftTopologyLauncher {
 
     public static void main(String[] args) throws Exception {
         // 1. 构建物理拓扑
-        // 数据流向： Source -> Split -> filter -> Chaos -> Count -> Sink
+        // 数据流向： Source -> Split(解析) -> Filter -> Chaos -> Count -> Sink
         TopologyBuilder builder = new TopologyBuilder();
 
         // Spout: 读取文件
         builder.setSpout("source-spout", new FileSourceSpout("/opt/data/faft.txt", true), 1);
 
-        // Split: 分流 (真轨和近似轨)
+        // Split: 解析 taxiId（单发，不再双轨分流）
         builder.setBolt("split-bolt", new SplitBolt(), 2)
                 .shuffleGrouping("source-spout");
 
-        // Filter: 简单过滤 (双轨都过)
+        // Filter: 简单过滤
         builder.setBolt("filter-bolt", new FilterBolt(), 2)
                 .shuffleGrouping("split-bolt");
 
-        // Chaos: 故障注入, 只处理实验轨
+        // Chaos: 故障注入
         builder.setBolt("chaos-bolt", new ChaosBolt(0.0001, 0, 50), 2)
                 .shuffleGrouping("filter-bolt");
 
-        // Count: 双轨计数与恢复
+        // Count: 计数 + 采样备份 + 周期性校验
         builder.setBolt("faft-count-bolt", new FaftCountBolt(), 2)
                 .fieldsGrouping("chaos-bolt", new org.apache.storm.tuple.Fields("word"));
 
-        // Sink: 计算全局误差与反馈
+        // Sink: 接收结果 + 动态重算
         builder.setBolt("faft-sink-bolt", new FaftSinkBolt(), 1)
                 .globalGrouping("faft-count-bolt");
 
@@ -133,6 +133,16 @@ public class FaftTopologyLauncher {
 
         conf.put("faft.zk.connect", zkConnect); // 注入 ZK 地址
         conf.put("faft.weights", rawWeightsMap); // 注入差异化权重表 (原始 Map)
+
+        // 校验窗口参数
+        int verifyInterval = 10000;
+        int verifyDuration = 1000;
+        if (faftConfig != null) {
+            verifyInterval = ((Number) faftConfig.getOrDefault("verify-interval", 10000)).intValue();
+            verifyDuration = ((Number) faftConfig.getOrDefault("verify-duration", 1000)).intValue();
+        }
+        conf.put("faft.verify.interval", verifyInterval);
+        conf.put("faft.verify.duration", verifyDuration);
 
         // 3. 构建逻辑拓扑 DAG & 静态 OperatorInfo
         Map<String, List<String>> dag = new HashMap<>();

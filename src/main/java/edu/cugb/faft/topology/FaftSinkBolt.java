@@ -3,7 +3,6 @@ package edu.cugb.faft.topology;
 import edu.cugb.faft.importance.NodeImportanceEvaluator;
 import edu.cugb.faft.manager.ApproxBackupManager;
 import edu.cugb.faft.monitor.FaftLatencyMonitor;
-import edu.cugb.faft.monitor.GlobalTruth;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
 import org.apache.storm.topology.OutputFieldsDeclarer;
@@ -19,14 +18,10 @@ public class FaftSinkBolt extends BaseRichBolt {
     private OutputCollector collector; // 用于 ack/fail
     private ApproxBackupManager backupManager;
     private String operatorId; // 记录该算子的 componentId，供按算子采样
-    // 最终结果视图
-    private Map<String, Integer> finalRealView;
-    private Map<String, Integer> finalApproxView;
 
-    // 窗口统计
+    // 日志窗口统计
     private int counter = 0;
-    private static final int CHECK_WINDOW = 5000; // 窗口大小
-    private double errorThreshold = 0.05;
+    private static final int LOG_WINDOW = 5000; // 日志打印间隔
 
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context,
@@ -35,11 +30,7 @@ public class FaftSinkBolt extends BaseRichBolt {
         this.operatorId = context.getThisComponentId();
         System.out.println("[FAFT BoltInit] sink componentId=" + this.operatorId);
 
-        // 1. 初始化双轨视图 (计算 Error 必须)
-        this.finalRealView = new HashMap<>();
-        this.finalApproxView = new HashMap<>();
-
-        // 2. Zookeeper 监控初始化 (修复配置失效问题)
+        // 1. Zookeeper 监控初始化 (修复配置失效问题)
         String zkConnect = (String) topoConf.get("faft.zk.connect");
         if (zkConnect == null)
             zkConnect = "192.168.213.130:2181"; // 默认兜底
@@ -57,7 +48,7 @@ public class FaftSinkBolt extends BaseRichBolt {
             );
         }
 
-        // 3. 接收初始采样率与重要性 (来自 Launcher 的计算结果)
+        // 2. 接收初始采样率与重要性 (来自 Launcher 的计算结果)
         try {
             Object ratios = topoConf.get("faft.ratios");
             if (ratios instanceof Map) {
@@ -83,15 +74,15 @@ public class FaftSinkBolt extends BaseRichBolt {
             System.err.println("⚠️ [Sink] 配置读取部分失败: " + e.getMessage());
         }
 
-        // 4. 解析算法参数 (差异化权重 + 超参)
-        // 4.1 全局默认权重
+        // 3. 解析算法参数 (差异化权重 + 超参)
+        // 3.1 全局默认权重
         double defAlpha = getDouble(topoConf, "faft.alpha", 0.34);
         double defBeta = getDouble(topoConf, "faft.beta", 0.33);
         double defGamma = getDouble(topoConf, "faft.gamma", 0.33);
         NodeImportanceEvaluator.Weights defaultWeights = new NodeImportanceEvaluator.Weights(defAlpha, defBeta,
                 defGamma);
 
-        // 4.2 差异化权重 Map (解析 List<Double> -> Weights)
+        // 3.2 差异化权重 Map (解析 List<Double> -> Weights)
         Map<String, NodeImportanceEvaluator.Weights> weightsObjMap = new HashMap<>();
         Object wObj = topoConf.get("faft.weights");
         if (wObj instanceof Map) {
@@ -109,16 +100,13 @@ public class FaftSinkBolt extends BaseRichBolt {
             }
         }
 
-        // 4.3 其他算法超参
+        // 3.3 其他算法超参
         double impactDelta = getDouble(topoConf, "faft.impact.delta", 0.9);
         double decayAlpha = getDouble(topoConf, "faft.decay.alpha", 0.9);
         double rmin = getDouble(topoConf, "faft.rmin", 0.1);
         double rmax = getDouble(topoConf, "faft.rmax", 1.0);
-        // 误差阈值也建议从配置读
-        this.errorThreshold = getDouble(topoConf, "faft.error.threshold", 0.05);
-        System.out.println("[FAFT Config] Loaded errorThreshold: " + this.errorThreshold);
 
-        // 5. 准备 DAG & 启动动态重算
+        // 4. 准备 DAG & 启动动态重算
         Map<String, List<String>> dag = null;
         List<String> sinkList = null;
         try {
@@ -162,68 +150,18 @@ public class FaftSinkBolt extends BaseRichBolt {
         try {
             String word = input.getStringByField("word");
             int count = input.getIntegerByField("count");
-            String type = input.getStringByField("type");
-            // 1. 更新双轨视图
-            if ("TYPE_REAL".equals(type)) {
-                finalRealView.put(word, count);
-            } else {
-                finalApproxView.put(word, count);
-            }
 
-            // 2. 窗口聚合
+            // 接收结果（MRE 反馈已由 FaftCountBolt 校验窗口完成）
             counter++;
-            if (counter >= CHECK_WINDOW) {
-                calculateAndAdjust();
+            if (counter >= LOG_WINDOW) {
+                System.out.printf("[Sink] 已处理 %d 条结果%n", counter);
                 counter = 0;
             }
+
             collector.ack(input);
         } catch (Exception e) {
             collector.ack(input);
         }
-    }
-
-    // 计算全局误差并触发调节
-    private void calculateAndAdjust() {
-        if (finalRealView.isEmpty())
-            return;
-
-        double totalRelativeError = 0.0;
-        int items = 0;
-
-        for (Map.Entry<String, Integer> entry : finalRealView.entrySet()) {
-            String key = entry.getKey();
-            double realVal = entry.getValue();
-            double approxVal = finalApproxView.getOrDefault(key, 0);
-
-            if (realVal > 0) {
-                double err = Math.abs(realVal - approxVal) / realVal;
-                totalRelativeError += err;
-                items++;
-            }
-        }
-
-        double mre = (items == 0) ? 0 : totalRelativeError / items;
-
-        String status = "✅";
-        if (mre > 0)
-            status = "⚠️";
-        if (mre > errorThreshold)
-            status = "❌";
-
-        System.out.printf("%s [Global Error] Items=%d | MRE=%.4f%% (Th=%.2f%%)\n",
-                status, items, mre * 100, errorThreshold * 100);
-
-        // 核心闭环：根据计算出的 MRE，调用 Manager 调整采样率
-        if (backupManager != null) {
-            backupManager.adjustByError(mre, errorThreshold);
-        }
-
-        // 计算完一轮后，清空视图！
-        // 这样下一次计算的就是“当前窗口”的纯净误差，不包含历史旧账
-        // 也能防止 Map 无限膨胀导致 OOM
-        finalRealView.clear();
-        finalApproxView.clear();
-
     }
 
     @Override

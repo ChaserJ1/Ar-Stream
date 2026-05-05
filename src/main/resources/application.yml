@@ -24,3 +24,7 @@ faft:
   impact-delta: 0.9 # 用于 O(v)
 
   zk-connect: 192.168.213.130:2181,192.168.213.131:2181,192.168.213.132:2181
+
+  # 校验窗口参数（FaftCountBolt 内部使用）
+  verify-interval: 10000   # 每隔多少条 tuple 开启一次校验
+  verify-duration: 1000    # 校验窗口持续多少条 tuple
