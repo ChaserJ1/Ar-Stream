@@ -23,12 +23,21 @@ public class FaftSinkBolt extends BaseRichBolt {
     private int counter = 0;
     private static final int LOG_WINDOW = 5000; // 日志打印间隔
 
+    // 全局误差追踪 (锚点键)
+    private Map<String, Integer> globalRealView;
+    private Map<String, Integer> globalApproxView;
+    private double errorThreshold = 0.05;
+
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context,
             OutputCollector collector) {
         this.collector = collector;
         this.operatorId = context.getThisComponentId();
         System.out.println("[FAFT BoltInit] sink componentId=" + this.operatorId);
+
+        this.globalRealView = new HashMap<>();
+        this.globalApproxView = new HashMap<>();
+        this.errorThreshold = getDouble(topoConf, "faft.error.threshold", 0.05);
 
         // 1. Zookeeper 监控初始化 (修复配置失效问题)
         String zkConnect = (String) topoConf.get("faft.zk.connect");
@@ -148,19 +157,56 @@ public class FaftSinkBolt extends BaseRichBolt {
     @Override
     public void execute(Tuple input) {
         try {
-            String word = input.getStringByField("word");
-            int count = input.getIntegerByField("count");
+            if ("truth-stream".equals(input.getSourceStreamId())) {
+                String word = input.getStringByField("word");
+                int truthCount = globalRealView.getOrDefault(word, 0) + 1;
+                globalRealView.put(word, truthCount);
+            } else {
+                String word = input.getStringByField("word");
+                int count = input.getIntegerByField("count");
+                
+                // 只有锚点键才需要记录近似值用于 MRE 计算
+                if (FilterBolt.isAnchorKey(word)) {
+                    globalApproxView.put(word, count);
+                }
+            }
 
-            // 接收结果（MRE 反馈已由 FaftCountBolt 校验窗口完成）
             counter++;
             if (counter >= LOG_WINDOW) {
-                System.out.printf("[Sink] 已处理 %d 条结果%n", counter);
+                calculateAndAdjustGlobalMRE();
                 counter = 0;
             }
 
             collector.ack(input);
         } catch (Exception e) {
             collector.ack(input);
+        }
+    }
+
+    private void calculateAndAdjustGlobalMRE() {
+        if (globalRealView.isEmpty()) return;
+        
+        double totalError = 0.0;
+        int items = 0;
+        
+        for (Map.Entry<String, Integer> entry : globalRealView.entrySet()) {
+            String key = entry.getKey();
+            double truthVal = entry.getValue();
+            double approxVal = globalApproxView.getOrDefault(key, 0);
+            
+            if (truthVal > 0) {
+                totalError += Math.abs(truthVal - approxVal) / truthVal;
+                items++;
+            }
+        }
+        
+        double globalMRE = (items == 0) ? 0.0 : totalError / items;
+        
+        System.out.printf("[Sink] 已处理 %d 条结果 | 当前全局 MRE=%.4f%% (阈值=%.2f%%, 锚点数=%d)%n", 
+                LOG_WINDOW, globalMRE * 100, errorThreshold * 100, items);
+                
+        if (backupManager != null) {
+            backupManager.adjustByError(globalMRE, errorThreshold);
         }
     }
 

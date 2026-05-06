@@ -58,9 +58,10 @@ public class FaftTopologyLauncher {
         builder.setBolt("faft-count-bolt", new FaftCountBolt(), 2)
                 .fieldsGrouping("chaos-bolt", new org.apache.storm.tuple.Fields("word"));
 
-        // Sink: 接收结果 + 动态重算
+        // Sink: 接收结果 + 动态重算 + 全局校验
         builder.setBolt("faft-sink-bolt", new FaftSinkBolt(), 1)
-                .globalGrouping("faft-count-bolt");
+                .globalGrouping("faft-count-bolt")
+                .globalGrouping("filter-bolt", "truth-stream"); // 接收真值流
 
         // 2. 算法参数、配置加载
         Config conf = new Config();

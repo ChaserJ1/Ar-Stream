@@ -20,18 +20,30 @@ import java.util.*;
 
 public class FilterBolt extends BaseBasicBolt {
 
+    // 判断是否为锚点键 (1% 的数据)
+    public static boolean isAnchorKey(String word) {
+        return word != null && Math.abs(word.hashCode() % 100) == 0;
+    }
+
     @Override
     public void execute(Tuple input, BasicOutputCollector collector) {
         String word = input.getStringByField("word");
 
         // 简单过滤 (例如过滤掉长度小于2的脏数据)
         if (word != null && word.length() > 2) {
+            // 1. 正常业务发射 (主流程)
             collector.emit(new Values(word));
+            
+            // 2. 旁路真值发射 (锚点键)
+            if (isAnchorKey(word)) {
+                collector.emit("truth-stream", new Values(word));
+            }
         }
     }
 
     @Override
     public void declareOutputFields(OutputFieldsDeclarer declarer) {
         declarer.declare(new Fields("word"));
+        declarer.declareStream("truth-stream", new Fields("word"));
     }
 }
