@@ -20,15 +20,17 @@ public class FaftCountBolt extends BaseRichBolt {
 
     private int taskId; // 集群中区分不同实例
 
-    // 单轨状态
-    private Map<String, Integer> counts;
+    // 微型双轨状态
+    private Map<String, Integer> realCounts;
+    private Map<String, Integer> approxCounts;
 
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context, OutputCollector collector) {
         this.collector = collector;
         this.componentId = context.getThisComponentId();
         this.taskId = context.getThisTaskId(); // 获取当前 Task ID
-        this.counts = new HashMap<>();
+        this.realCounts = new HashMap<>();
+        this.approxCounts = new HashMap<>();
 
         // 1. 先使用默认参数初始化 BackupManager，防止配置读取失败导致空指针
         try {
@@ -80,34 +82,37 @@ public class FaftCountBolt extends BaseRichBolt {
     public void execute(Tuple input) {
         try {
             String word = input.getStringByField("word");
+            int type = input.getIntegerByField("type");
 
             // ============================================
             // 1. 崩溃信号处理
             // ============================================
             if ("FAFT_CRASH_SIGNAL".equals(word)) {
-                // [实验埋点] 开始计时
-                long start = System.currentTimeMillis();
-                System.out.printf("[FaftCount] Task-%d 收到崩溃信号！模拟内存丢失...%n", taskId);
+                // 只有 TYPE_APPROX 受到崩溃影响
+                if (type == SplitBolt.TYPE_APPROX) {
+                    // [实验埋点] 开始计时
+                    long start = System.currentTimeMillis();
+                    System.out.printf("[FaftCount] Task-%d 收到崩溃信号！模拟内存丢失...%n", taskId);
 
-                // 1. 模拟状态丢失（清空主状态）
-                this.counts.clear();
-                // 注意：verifyTruthCounts 不清空，它是真值参照
+                    // 1. 模拟状态丢失（清空近似状态，不影响真值状态）
+                    this.approxCounts.clear();
 
-                // 2. 从Redis近似备份中恢复 (Restore)
-                if (backupManager != null) {
-                    Map<String, Integer> backup = backupManager.getBackup(this.componentId, this.taskId);
-                    if (backup != null && !backup.isEmpty()) {
-                        this.counts.putAll(backup);
-                        System.out.printf("[FaftCount] Task-%d 从 Redis 恢复 %d 项%n", taskId, backup.size());
+                    // 2. 从Redis近似备份中恢复 (Restore)
+                    if (backupManager != null) {
+                        Map<String, Integer> backup = backupManager.getBackup(this.componentId, this.taskId);
+                        if (backup != null && !backup.isEmpty()) {
+                            this.approxCounts.putAll(backup);
+                            System.out.printf("[FaftCount] Task-%d 从 Redis 恢复 %d 项%n", taskId, backup.size());
+                        }
                     }
+
+                    // [实验埋点] 结束计时，打印 RTO
+                    long duration = System.currentTimeMillis() - start;
+                    System.out.println("[EXP-METRIC] Type=RTO Time=" + duration + "ms Task=" + taskId + " TS=" + System.currentTimeMillis());
+
+                    // 3. 记录恢复完成时间 (供 Monitor 计算 Latency)
+                    FaftLatencyMonitor.checkAndRecordRecovery();
                 }
-
-                // [实验埋点] 结束计时，打印 RTO
-                long duration = System.currentTimeMillis() - start;
-                System.out.println("[EXP-METRIC] Type=RTO Time=" + duration + "ms Task=" + taskId + " TS=" + System.currentTimeMillis());
-
-                // 3. 记录恢复完成时间 (供 Monitor 计算 Latency)
-                FaftLatencyMonitor.checkAndRecordRecovery();
 
                 collector.ack(input);
                 return; // 信号本身不计入统计
@@ -116,17 +121,23 @@ public class FaftCountBolt extends BaseRichBolt {
             // ============================================
             // 2. 正常计数 + 采样备份
             // ============================================
-            int count = counts.getOrDefault(word, 0) + 1;
-            counts.put(word, count);
+            int count;
+            if (type == SplitBolt.TYPE_REAL) {
+                count = realCounts.getOrDefault(word, 0) + 1;
+                realCounts.put(word, count);
+                // 真值流不需要存入 Redis 进行近似容错，因为它在内存中受锚点保护不丢失
+            } else {
+                count = approxCounts.getOrDefault(word, 0) + 1;
+                approxCounts.put(word, count);
 
-            // 尝试备份 (Backup Strategy)
-            // 这里传入 componentId，Manager 会查找对应的采样率决定是否存储
-            backupManager.tryBackup(this.componentId, this.taskId, word, count);
+                // 尝试备份 (Backup Strategy)
+                backupManager.tryBackup(this.componentId, this.taskId, word, count);
+            }
 
             // ============================================
             // 3. 发射结果
             // ============================================
-            collector.emit(input, new Values(word, count));
+            collector.emit(input, new Values(word, count, type));
             collector.ack(input);
 
         } catch (Exception e) {
@@ -137,7 +148,7 @@ public class FaftCountBolt extends BaseRichBolt {
 
     @Override
     public void declareOutputFields(OutputFieldsDeclarer declarer) {
-        // 输出格式: 单词, 计数值
-        declarer.declare(new Fields("word", "count"));
+        // 输出格式: 单词, 计数值, 类型
+        declarer.declare(new Fields("word", "count", "type"));
     }
 }

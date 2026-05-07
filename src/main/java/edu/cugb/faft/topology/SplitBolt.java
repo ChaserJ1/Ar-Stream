@@ -17,6 +17,14 @@ import java.util.Map;
 public class SplitBolt extends BaseRichBolt {
     private OutputCollector collector;
 
+    public static final int TYPE_REAL = 0;
+    public static final int TYPE_APPROX = 1;
+
+    // 判断是否为锚点键 (1% 的数据)
+    public static boolean isAnchorKey(String word) {
+        return word != null && Math.abs(word.hashCode() % 100) == 0;
+    }
+
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context, OutputCollector collector) {
         this.collector = collector;
@@ -35,7 +43,10 @@ public class SplitBolt extends BaseRichBolt {
             if (firstComma != -1 && secondComma != -1) {
                 String taxiId = line.substring(firstComma + 1, secondComma);
                 if (!taxiId.isEmpty()) {
-                    collector.emit(input, new Values(taxiId));
+                    if (isAnchorKey(taxiId)) {
+                        collector.emit(input, new Values(taxiId, TYPE_REAL));
+                    }
+                    collector.emit(input, new Values(taxiId, TYPE_APPROX));
                 }
             }
             collector.ack(input);
@@ -48,6 +59,6 @@ public class SplitBolt extends BaseRichBolt {
 
     @Override
     public void declareOutputFields(OutputFieldsDeclarer declarer) {
-        declarer.declare(new Fields("word"));
+        declarer.declare(new Fields("word", "type"));
     }
 }

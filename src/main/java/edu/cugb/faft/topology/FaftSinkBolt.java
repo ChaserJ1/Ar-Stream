@@ -157,16 +157,15 @@ public class FaftSinkBolt extends BaseRichBolt {
     @Override
     public void execute(Tuple input) {
         try {
-            if ("truth-stream".equals(input.getSourceStreamId())) {
-                String word = input.getStringByField("word");
-                int truthCount = globalRealView.getOrDefault(word, 0) + 1;
-                globalRealView.put(word, truthCount);
+            String word = input.getStringByField("word");
+            int count = input.getIntegerByField("count");
+            int type = input.getIntegerByField("type");
+
+            if (type == SplitBolt.TYPE_REAL) {
+                globalRealView.put(word, count);
             } else {
-                String word = input.getStringByField("word");
-                int count = input.getIntegerByField("count");
-                
-                // 只有锚点键才需要记录近似值用于 MRE 计算
-                if (FilterBolt.isAnchorKey(word)) {
+                // 对于 APPROX 数据，我们只关心锚点键的近似值用于 MRE 计算
+                if (SplitBolt.isAnchorKey(word)) {
                     globalApproxView.put(word, count);
                 }
             }

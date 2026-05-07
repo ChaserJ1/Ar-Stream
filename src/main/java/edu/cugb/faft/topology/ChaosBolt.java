@@ -50,6 +50,14 @@ public class ChaosBolt extends BaseRichBolt {
     @Override
     public void execute(Tuple input) {
         String word = input.getStringByField("word");
+        int type = input.getIntegerByField("type");
+
+        // 如果是真值轨道（锚点保护），直接放行，不注入故障
+        if (type == SplitBolt.TYPE_REAL) {
+            collector.emit(input, new Values(word, type));
+            collector.ack(input);
+            return;
+        }
 
         // 故障注入
         if (random.nextDouble() < failProbability) {
@@ -58,8 +66,8 @@ public class ChaosBolt extends BaseRichBolt {
 
             FaftLatencyMonitor.recordFailure(); // 记录时间
 
-            // 发送崩溃信号 (替代原始数据)
-            collector.emit(input, new Values("FAFT_CRASH_SIGNAL"));
+            // 发送崩溃信号 (替代原始数据), 类型为 APPROX
+            collector.emit(input, new Values("FAFT_CRASH_SIGNAL", type));
 
             // 手动 ACK，告诉 Spout "处理成功"，防止 Spout 重发这条数据
             collector.ack(input);
@@ -69,7 +77,7 @@ public class ChaosBolt extends BaseRichBolt {
             if (random.nextDouble() < delayProbability) {
                 try { Thread.sleep(delay); } catch (InterruptedException e) {}
             }
-            collector.emit(input, new Values(word));
+            collector.emit(input, new Values(word, type));
             collector.ack(input);
         }
     }
@@ -77,6 +85,6 @@ public class ChaosBolt extends BaseRichBolt {
 
     @Override
     public void declareOutputFields(OutputFieldsDeclarer declarer) {
-        declarer.declare(new Fields("word"));
+        declarer.declare(new Fields("word", "type"));
     }
 }

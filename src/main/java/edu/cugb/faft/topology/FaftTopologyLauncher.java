@@ -60,8 +60,7 @@ public class FaftTopologyLauncher {
 
         // Sink: 接收结果 + 动态重算 + 全局校验
         builder.setBolt("faft-sink-bolt", new FaftSinkBolt(), 1)
-                .globalGrouping("faft-count-bolt")
-                .globalGrouping("filter-bolt", "truth-stream"); // 接收真值流
+                .globalGrouping("faft-count-bolt");
 
         // 2. 算法参数、配置加载
         Config conf = new Config();
