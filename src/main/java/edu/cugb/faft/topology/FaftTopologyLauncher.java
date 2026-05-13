@@ -75,7 +75,8 @@ public class FaftTopologyLauncher {
         double defGamma = 0.33;
 
         double impactDelta = 0.9;
-        double decayAlpha = 0.9;
+        double omegaIn = 0.5;
+        double omegaOut = 0.5;
         double errorThreshold = 0.05;
 
         double rmin = 0.1;
@@ -98,7 +99,8 @@ public class FaftTopologyLauncher {
 
             // 解析算法超参
             impactDelta = getDouble(faftConfig, "impact-delta", impactDelta);
-            decayAlpha = getDouble(faftConfig, "decay-alpha", decayAlpha);
+            omegaIn = getDouble(faftConfig, "omega-in", omegaIn);
+            omegaOut = getDouble(faftConfig, "omega-out", omegaOut);
             errorThreshold = getDouble(faftConfig, "error-threshold", errorThreshold);
 
             rmin = getDouble(faftConfig, "rmin", rmin);
@@ -124,7 +126,8 @@ public class FaftTopologyLauncher {
         conf.put("faft.gamma", defGamma);
 
         conf.put("faft.impact.delta", impactDelta);
-        conf.put("faft.decay.alpha", decayAlpha);
+        conf.put("faft.omega.in", omegaIn);
+        conf.put("faft.omega.out", omegaOut);
         conf.put("faft.error.threshold", errorThreshold);
 
         conf.put("faft.rmin", rmin);
@@ -186,7 +189,7 @@ public class FaftTopologyLauncher {
         NodeImportanceEvaluator.Result res = NodeImportanceEvaluator.evaluateAndAssignRatios(
                 dag, sinks, infos,
                 weightsObjMap, defaultWeightsObj, // 传入差异化权重
-                impactDelta, decayAlpha,
+                impactDelta, omegaIn, omegaOut,
                 rmin, rmax);
 
         // 4.3 结果下发到 Storm Config，供各 Bolt 在 prepare() 读取

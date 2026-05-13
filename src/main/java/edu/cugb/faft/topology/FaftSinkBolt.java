@@ -111,7 +111,8 @@ public class FaftSinkBolt extends BaseRichBolt {
 
         // 3.3 其他算法超参
         double impactDelta = getDouble(topoConf, "faft.impact.delta", 0.9);
-        double decayAlpha = getDouble(topoConf, "faft.decay.alpha", 0.9);
+        double omegaIn = getDouble(topoConf, "faft.omega.in", 0.5);
+        double omegaOut = getDouble(topoConf, "faft.omega.out", 0.5);
         double rmin = getDouble(topoConf, "faft.rmin", 0.1);
         double rmax = getDouble(topoConf, "faft.rmax", 1.0);
 
@@ -148,7 +149,7 @@ public class FaftSinkBolt extends BaseRichBolt {
                 dag, sinks,
                 weightsObjMap, // 差异化权重
                 defaultWeights, // 默认权重
-                impactDelta, decayAlpha,
+                impactDelta, omegaIn, omegaOut,
                 rmin, rmax,
                 10_000L // 重算周期 10s
         );

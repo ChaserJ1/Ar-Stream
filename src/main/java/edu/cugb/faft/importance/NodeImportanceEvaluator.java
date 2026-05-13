@@ -52,7 +52,8 @@ public class NodeImportanceEvaluator {
      * @param weightsMap     差异化权重配置表 (Key: componentId, Value: Weights)
      * @param defaultWeights 默认权重配置 (当 Map 中找不到时使用)
      * @param delta          O(v) 计算用的衰减系数
-     * @param decayAlpha     D(v) 计算用的结构衰减系数
+     * @param omegaIn        D(v) 入度敏感度权重
+     * @param omegaOut       D(v) 出度敏感度权重
      * @param rmin           最小采样率
      * @param rmax           最大采样率
      * @return 评估结果 Result
@@ -64,7 +65,7 @@ public class NodeImportanceEvaluator {
             Map<String, Weights> weightsMap,            // 差异化权重表
             Weights defaultWeights,                     // 默认权重
             double delta,                               // O(v) 衰减参数
-            double decayAlpha,                          // D(v) 衰减参数
+            double omegaIn, double omegaOut,            // D(v) 入度/出度权重
             double rmin, double rmax)                   // 采样率上下限
     {
 
@@ -73,7 +74,7 @@ public class NodeImportanceEvaluator {
         O = normalize(O);
 
         // 2) D(v)
-        Map<String, Double> D = UpDownStreamDependency.compute(dag, decayAlpha);
+        Map<String, Double> D = UpDownStreamDependency.compute(dag, omegaIn, omegaOut);
         D = normalize(D);
 
         // 3) C(v)（未归一）→ 归一（若 opInfo 缺失则默认 0）

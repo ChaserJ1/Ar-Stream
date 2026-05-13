@@ -20,7 +20,8 @@ faft:
   error-threshold: 0.05
 
   # 结构依赖的衰减参数（用于 UpDownStreamDependency / OutputImpact）
-  decay-alpha: 0.9 # 用于 D(v)
+  omega-in: 0.5    # D(v) 入度敏感度权重
+  omega-out: 0.5   # D(v) 出度敏感度权重
   impact-delta: 0.9 # 用于 O(v)
 
   zk-connect: 192.168.213.130:2181,192.168.213.131:2181,192.168.213.132:2181

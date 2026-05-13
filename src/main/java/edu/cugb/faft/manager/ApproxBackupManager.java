@@ -370,7 +370,7 @@ public class ApproxBackupManager implements Serializable {
                                       Set<String> sinks,
                                       Map<String, NodeImportanceEvaluator.Weights> weightsMap,
                                       NodeImportanceEvaluator.Weights defaultWeights,
-                                      double impactDelta, double decayAlpha,
+                                      double impactDelta, double omegaIn, double omegaOut,
                                       double rmin, double rmax,
                                       long periodMs) {
         if (!rebalanceStarted.compareAndSet(false, true)) return; // 避免重复启动
@@ -411,7 +411,7 @@ public class ApproxBackupManager implements Serializable {
                 // D) 调用评估器重算 I→r
                 NodeImportanceEvaluator.Result res =
                         NodeImportanceEvaluator.evaluateAndAssignRatios(
-                                dag, sinks, infos, weightsMap, defaultWeights, impactDelta, decayAlpha, rmin, rmax);
+                                dag, sinks, infos, weightsMap, defaultWeights, impactDelta, omegaIn, omegaOut, rmin, rmax);
 
                 // E) 刷新 per-op 基准 r 表, 同步刷新 importance 表
                 updateSamplingRatios(res.R);
