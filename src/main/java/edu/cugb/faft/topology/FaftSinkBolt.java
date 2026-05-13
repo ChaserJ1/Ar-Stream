@@ -21,12 +21,12 @@ public class FaftSinkBolt extends BaseRichBolt {
 
     // 日志窗口统计
     private int counter = 0;
-    private static final int LOG_WINDOW = 5000; // 日志打印间隔
+    private static final int LOG_WINDOW = 10000; // 日志打印间隔 / MRE校验窗口
 
     // 全局误差追踪 (锚点键)
     private Map<String, Integer> globalRealView;
     private Map<String, Integer> globalApproxView;
-    private double errorThreshold = 0.05;
+    private double errorThreshold = 0.10;
 
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context,
@@ -37,7 +37,7 @@ public class FaftSinkBolt extends BaseRichBolt {
 
         this.globalRealView = new HashMap<>();
         this.globalApproxView = new HashMap<>();
-        this.errorThreshold = getDouble(topoConf, "faft.error.threshold", 0.05);
+        this.errorThreshold = getDouble(topoConf, "faft.error.threshold", 0.10);
 
         // 1. Zookeeper 监控初始化 (修复配置失效问题)
         String zkConnect = (String) topoConf.get("faft.zk.connect");

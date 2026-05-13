@@ -17,7 +17,7 @@ faft:
   step: 0.05
 
   # 误差阈值
-  error-threshold: 0.05
+  error-threshold: 0.10
 
   # 结构依赖的衰减参数（用于 UpDownStreamDependency / OutputImpact）
   omega-in: 0.5    # D(v) 入度敏感度权重

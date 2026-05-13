@@ -77,7 +77,7 @@ public class FaftTopologyLauncher {
         double impactDelta = 0.9;
         double omegaIn = 0.5;
         double omegaOut = 0.5;
-        double errorThreshold = 0.05;
+        double errorThreshold = 0.10;
 
         double rmin = 0.1;
         double rmax = 1.0;

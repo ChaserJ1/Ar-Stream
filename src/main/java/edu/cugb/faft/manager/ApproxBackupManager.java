@@ -263,11 +263,11 @@ public class ApproxBackupManager implements Serializable {
 
             // ========== 分层递进调节策略 ==========
             // Tier 1: Top 0%~30%  → 优先调整（收益最高）
-            // Tier 2: 31%~60%     → Tier1 全满载后启用
-            // Tier 3: 61%~100%    → Tier2 也全满载后启用
+            // Tier 2: 31%~70%     → Tier1 全满载后启用
+            // Tier 3: 71%~100%    → Tier2 也全满载后启用
             int tier1End = Math.min(targetCount, totalOps);              // Top 30%
-            int tier2End = Math.min((int)(totalOps * 0.6), totalOps);    // 31%~60%
-            int tier3End = totalOps;                                     // 61%~100%
+            int tier2End = Math.min((int)(totalOps * 0.7), totalOps);    // 31%~70%
+            int tier3End = totalOps;                                     // 71%~100%
 
             int currentTier = 1;
             boolean allSaturatedInTier = true; // 当前层是否全部满载
@@ -283,13 +283,13 @@ public class ApproxBackupManager implements Serializable {
                     // Tier1 全满载，升级到 Tier2
                     currentTier = 2;
                     allSaturatedInTier = true;
-                    System.out.println("[FAFT Adjust] ⬆️ Tier1 (Top30%) 全部满载，升级至 Tier2 (31%-60%)");
+                    System.out.println("[FAFT Adjust] ⬆️ Tier1 (Top30%) 全部满载，升级至 Tier2 (31%-70%)");
                 } else if (i == tier2End && currentTier == 2) {
                     if (!allSaturatedInTier) break; // Tier2 未全满载，不需要继续
                     // Tier2 也全满载，升级到 Tier3
                     currentTier = 3;
                     allSaturatedInTier = true;
-                    System.out.println("[FAFT Adjust] ⬆️ Tier2 (31%-60%) 全部满载，升级至 Tier3 (61%-100%)");
+                    System.out.println("[FAFT Adjust] ⬆️ Tier2 (31%-70%) 全部满载，升级至 Tier3 (71%-100%)");
                 }
 
                 // 如果该算子已经满载，跳过
@@ -323,6 +323,8 @@ public class ApproxBackupManager implements Serializable {
             // 策略：按重要性从低到高排序 (优先牺牲不重要的节点)
             sortedOps.sort((a, b) -> Double.compare(a.getValue(), b.getValue())); // 升序
 
+            int downTarget = Math.max(1, (int) (sortedOps.size() * 0.4)); // 下调 Bottom 40%
+
             for (Map.Entry<String, Double> entry : sortedOps) {
                 String op = entry.getKey();
                 double oldR = ratioByOperator.getOrDefault(op, currentRatio);
@@ -340,7 +342,7 @@ public class ApproxBackupManager implements Serializable {
                         op, oldR, newR, Eobs, lower);
 
                 adjustedCount++;
-                if (adjustedCount >= targetCount) break;
+                if (adjustedCount >= downTarget) break;
             }
         }
     }
