@@ -1,5 +1,6 @@
 package edu.cugb.faft.topology;
 
+import edu.cugb.faft.manager.ApproxBackupManager;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
 import org.apache.storm.topology.BasicOutputCollector;
@@ -20,14 +21,32 @@ import java.util.*;
 
 public class FilterBolt extends BaseBasicBolt {
 
+    private transient ApproxBackupManager backupManager;
+
+    @Override
+    public void prepare(Map<String, Object> topoConf, TopologyContext context) {
+        try {
+            this.backupManager = ApproxBackupManager.getInstance();
+        } catch (Exception e) {
+            this.backupManager = null;
+        }
+    }
+
     @Override
     public void execute(Tuple input, BasicOutputCollector collector) {
-        String word = input.getStringByField("word");
-        int type = input.getIntegerByField("type");
+        long t0 = System.nanoTime();
+        try {
+            String word = input.getStringByField("word");
+            int type = input.getIntegerByField("type");
 
-        // 简单过滤 (例如过滤掉长度小于2的脏数据)
-        if (word != null && word.length() > 2) {
-            collector.emit(new Values(word, type));
+            // 简单过滤 (例如过滤掉长度小于2的脏数据)
+            if (word != null && word.length() > 2) {
+                collector.emit(new Values(word, type));
+            }
+        } finally {
+            if (backupManager != null) {
+                backupManager.reportExecuteNanos("filter-bolt", System.nanoTime() - t0);
+            }
         }
     }
 

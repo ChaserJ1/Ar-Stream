@@ -1,5 +1,6 @@
 package edu.cugb.faft.topology;
 
+import edu.cugb.faft.manager.ApproxBackupManager;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
 import org.apache.storm.topology.OutputFieldsDeclarer;
@@ -16,6 +17,7 @@ import java.util.Map;
  */
 public class SplitBolt extends BaseRichBolt {
     private OutputCollector collector;
+    private ApproxBackupManager backupManager;
 
     public static final int TYPE_REAL = 0;
     public static final int TYPE_APPROX = 1;
@@ -28,10 +30,16 @@ public class SplitBolt extends BaseRichBolt {
     @Override
     public void prepare(Map<String, Object> topoConf, TopologyContext context, OutputCollector collector) {
         this.collector = collector;
+        try {
+            this.backupManager = ApproxBackupManager.getInstance();
+        } catch (Exception e) {
+            this.backupManager = null;
+        }
     }
 
     @Override
     public void execute(Tuple input) {
+        long t0 = System.nanoTime();
         try {
             // 1. 获取输入 (Spout 只发了 sentence)
             String line = input.getStringByField("sentence");
@@ -53,8 +61,11 @@ public class SplitBolt extends BaseRichBolt {
         } catch (Exception e) {
             e.printStackTrace();
             collector.ack(input); // 出错也 Ack，防止卡死
+        } finally {
+            if (backupManager != null) {
+                backupManager.reportExecuteNanos("split-bolt", System.nanoTime() - t0);
+            }
         }
-
     }
 
     @Override

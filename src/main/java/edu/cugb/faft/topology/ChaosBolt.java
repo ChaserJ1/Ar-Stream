@@ -1,6 +1,7 @@
 package edu.cugb.faft.topology;
 
 
+import edu.cugb.faft.manager.ApproxBackupManager;
 import edu.cugb.faft.monitor.FaftLatencyMonitor;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
@@ -16,6 +17,7 @@ import java.util.Random;
 public class ChaosBolt extends BaseRichBolt {
     private OutputCollector collector;
     private Random random;
+    private ApproxBackupManager backupManager;
 
     // 故障注入参数
     private double failProbability; // 失败概率
@@ -45,40 +47,54 @@ public class ChaosBolt extends BaseRichBolt {
 
         // 2. 注入给 Monitor (只是存个字符串，不联网)
         FaftLatencyMonitor.setZkConnect(zkStr);
+
+        // 3. 获取 BackupManager 实例
+        try {
+            this.backupManager = ApproxBackupManager.getInstance();
+        } catch (Exception e) {
+            this.backupManager = null;
+        }
     }
 
     @Override
     public void execute(Tuple input) {
-        String word = input.getStringByField("word");
-        int type = input.getIntegerByField("type");
+        long t0 = System.nanoTime();
+        try {
+            String word = input.getStringByField("word");
+            int type = input.getIntegerByField("type");
 
-        // 如果是真值轨道（锚点保护），直接放行，不注入故障
-        if (type == SplitBolt.TYPE_REAL) {
-            collector.emit(input, new Values(word, type));
-            collector.ack(input);
-            return;
-        }
-
-        // 故障注入
-        if (random.nextDouble() < failProbability) {
-            // === 触发故障 ===
-            System.out.println("⚡ [Chaos] 击落数据: " + word + " | 发送崩溃信号...");
-
-            FaftLatencyMonitor.recordFailure(); // 记录时间
-
-            // 发送崩溃信号 (替代原始数据), 类型为 APPROX
-            collector.emit(input, new Values("FAFT_CRASH_SIGNAL", type));
-
-            // 手动 ACK，告诉 Spout "处理成功"，防止 Spout 重发这条数据
-            collector.ack(input);
-        } else {
-            // === 正常情况 ===
-            // 模拟随机延迟
-            if (random.nextDouble() < delayProbability) {
-                try { Thread.sleep(delay); } catch (InterruptedException e) {}
+            // 如果是真值轨道（锚点保护），直接放行，不注入故障
+            if (type == SplitBolt.TYPE_REAL) {
+                collector.emit(input, new Values(word, type));
+                collector.ack(input);
+                return;
             }
-            collector.emit(input, new Values(word, type));
-            collector.ack(input);
+
+            // 故障注入
+            if (random.nextDouble() < failProbability) {
+                // === 触发故障 ===
+                System.out.println("⚡ [Chaos] 击落数据: " + word + " | 发送崩溃信号...");
+
+                FaftLatencyMonitor.recordFailure(); // 记录时间
+
+                // 发送崩溃信号 (替代原始数据), 类型为 APPROX
+                collector.emit(input, new Values("FAFT_CRASH_SIGNAL", type));
+
+                // 手动 ACK，告诉 Spout "处理成功"，防止 Spout 重发这条数据
+                collector.ack(input);
+            } else {
+                // === 正常情况 ===
+                // 模拟随机延迟
+                if (random.nextDouble() < delayProbability) {
+                    try { Thread.sleep(delay); } catch (InterruptedException e) {}
+                }
+                collector.emit(input, new Values(word, type));
+                collector.ack(input);
+            }
+        } finally {
+            if (backupManager != null) {
+                backupManager.reportExecuteNanos("chaos-bolt", System.nanoTime() - t0);
+            }
         }
     }
 

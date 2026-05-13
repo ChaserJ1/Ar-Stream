@@ -157,6 +157,7 @@ public class FaftSinkBolt extends BaseRichBolt {
 
     @Override
     public void execute(Tuple input) {
+        long t0 = System.nanoTime();
         try {
             String word = input.getStringByField("word");
             int count = input.getIntegerByField("count");
@@ -180,6 +181,11 @@ public class FaftSinkBolt extends BaseRichBolt {
             collector.ack(input);
         } catch (Exception e) {
             collector.ack(input);
+        } finally {
+            if (backupManager != null) {
+                backupManager.reportExecuteNanos(this.operatorId, System.nanoTime() - t0);
+                backupManager.reportStateSize(this.operatorId, globalRealView.size() + globalApproxView.size());
+            }
         }
     }
 

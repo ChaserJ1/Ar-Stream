@@ -80,6 +80,7 @@ public class FaftCountBolt extends BaseRichBolt {
 
     @Override
     public void execute(Tuple input) {
+        long t0 = System.nanoTime();
         try {
             String word = input.getStringByField("word");
             int type = input.getIntegerByField("type");
@@ -131,7 +132,9 @@ public class FaftCountBolt extends BaseRichBolt {
                 approxCounts.put(word, count);
 
                 // 尝试备份 (Backup Strategy)
-                backupManager.tryBackup(this.componentId, this.taskId, word, count);
+                if (backupManager != null) {
+                    backupManager.tryBackup(this.componentId, this.taskId, word, count);
+                }
             }
 
             // ============================================
@@ -143,6 +146,11 @@ public class FaftCountBolt extends BaseRichBolt {
         } catch (Exception e) {
             e.printStackTrace();
             collector.fail(input);
+        } finally {
+            if (backupManager != null) {
+                backupManager.reportExecuteNanos(this.componentId, System.nanoTime() - t0);
+                backupManager.reportStateSize(this.componentId, realCounts.size() + approxCounts.size());
+            }
         }
     }
 

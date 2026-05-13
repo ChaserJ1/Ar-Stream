@@ -6,7 +6,6 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 
 import java.io.Serializable;
-import java.lang.management.ManagementFactory;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -48,6 +47,12 @@ public class ApproxBackupManager implements Serializable {
     // 统计：全局/每算子处理计数（TPS 差分用）
     private long processedCount = 0L, backupCount = 0L;
     private final ConcurrentHashMap<String, Long> processedByOp = new ConcurrentHashMap<>();
+
+    // per-operator CPU 时间累计 (纳秒，execute() 内 nanoTime 差值累加)
+    private final ConcurrentHashMap<String, Long> cpuNanosByOp = new ConcurrentHashMap<>();
+
+    // per-operator 状态规模 (HashMap 条目数，latest 快照)
+    private final ConcurrentHashMap<String, Long> stateSizeByOp = new ConcurrentHashMap<>();
 
     // 动态重算循环
     private final AtomicBoolean rebalanceStarted = new AtomicBoolean(false);
@@ -233,6 +238,24 @@ public class ApproxBackupManager implements Serializable {
     private double clamp(double x) { return Math.max(rmin, Math.min(rmax, x)); }
 
     /**
+     * 算子上报单次 execute() 耗时（纳秒），用于 per-operator CPU 繁忙度评估
+     */
+    public void reportExecuteNanos(String operatorId, long nanos) {
+        if (operatorId != null) {
+            cpuNanosByOp.merge(operatorId, nanos, Long::sum);
+        }
+    }
+
+    /**
+     * 算子上报当前状态规模（内部 HashMap 条目数），用于 per-operator 内存占用评估
+     */
+    public void reportStateSize(String operatorId, long entries) {
+        if (operatorId != null) {
+            stateSizeByOp.put(operatorId, entries);
+        }
+    }
+
+    /**
      * 根据 Sink 端测得的误差进行反馈调节
      * @param Eobs 观测误差
      * @param Emax 允许的最大误差阈值
@@ -378,6 +401,7 @@ public class ApproxBackupManager implements Serializable {
         if (!rebalanceStarted.compareAndSet(false, true)) return; // 避免重复启动
 
         final Map<String, Long> lastCount = new ConcurrentHashMap<>();
+        final Map<String, Long> lastCpuNanos = new ConcurrentHashMap<>();
         rebalanceExec.scheduleAtFixedRate(() -> {
             try {
                 // A) TPS 计算每算子的相对处理速度
@@ -391,23 +415,36 @@ public class ApproxBackupManager implements Serializable {
                 }
                 double maxTps = tps.values().stream().mapToDouble(x -> x).max().orElse(1.0);
 
-                // B) CPU / Mem 获取当前 JVM 进程的负载作为近似值
-                double cpu = 0.0;
-                try {
-                    com.sun.management.OperatingSystemMXBean os =
-                            (com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-                    cpu = Math.max(0.0, os.getProcessCpuLoad()); // 0~1
-                } catch (Throwable ignore) {}
-                long used = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-                double mem = (Runtime.getRuntime().maxMemory() > 0)
-                        ? (used / (double) Runtime.getRuntime().maxMemory())
-                        : 0.0;
+                // B) CPU — per-operator execute() 耗时占比 (delta_nanos / period_ns)
+                Map<String, Double> cpuMap = new HashMap<>();
+                for (String op : dag.keySet()) {
+                    long now = cpuNanosByOp.getOrDefault(op, 0L);
+                    long prev = lastCpuNanos.getOrDefault(op, 0L);
+                    double deltaNanos = Math.max(0, now - prev);
+                    double cpuLoad = Math.min(1.0, deltaNanos / (periodMs * 1_000_000.0));
+                    cpuMap.put(op, cpuLoad);
+                    lastCpuNanos.put(op, now);
+                }
 
-                // C) 组装 OperatorInfo（TPS 归一化到 0~1）
+                // C) Mem — per-operator 状态规模 (条目数)，归一化到 0~1
+                long maxStateSize = 1; // 避免除零
+                for (long sz : stateSizeByOp.values()) {
+                    maxStateSize = Math.max(maxStateSize, sz);
+                }
+                Map<String, Double> memMap = new HashMap<>();
+                for (String op : dag.keySet()) {
+                    double memLoad = (maxStateSize == 0) ? 0.0
+                            : (stateSizeByOp.getOrDefault(op, 0L) / (double) maxStateSize);
+                    memMap.put(op, memLoad);
+                }
+
+                // D) 组装 OperatorInfo（TPS/CPU/Mem 均归一化到 0~1）
                 Map<String, edu.cugb.faft.importance.OperatorInfo> infos = new HashMap<>();
                 for (String op : dag.keySet()) {
                     double ntps = maxTps == 0 ? 0 : tps.getOrDefault(op, 0.0) / maxTps;
-                    infos.put(op, new edu.cugb.faft.importance.OperatorInfo(op, cpu, mem, ntps));
+                    double ncpu = cpuMap.getOrDefault(op, 0.0);
+                    double nmem = memMap.getOrDefault(op, 0.0);
+                    infos.put(op, new edu.cugb.faft.importance.OperatorInfo(op, ncpu, nmem, ntps));
                 }
 
                 // D) 调用评估器重算 I→r
