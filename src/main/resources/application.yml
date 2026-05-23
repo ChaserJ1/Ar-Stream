@@ -11,6 +11,13 @@ faft:
     "chaos-bolt": [0.3, 0.3, 0.4]
     "faft-count-bolt": [0.20, 0.60, 0.20]
 
+  # YSB 拓扑差异化权重
+  ysb-weights:
+    "event-filter-bolt": [0.0, 0.0, 1.0]
+    "project-bolt": [0.0, 0.0, 1.0]
+    "join-bolt": [0.3, 0.3, 0.4]
+    "window-agg-bolt": [0.20, 0.60, 0.20]
+
   # 采样率上下限与步长
   rmin: 0.10
   rmax: 1.00
